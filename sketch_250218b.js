@@ -1,77 +1,80 @@
-let cubes = []; // Array to hold the positions and rotations of the cubes
-let img; // Variable to hold the texture image
-let near = 1; // Default near value
-let far = 40; // Default far value
+let cubes = []; // Array para almacenar las posiciones y rotaciones de los cubos
+let img; // Variable para almacenar la textura de la imagen
+let near = 1; // Valor cercano por defecto
+let far = 40; // Valor lejano por defecto
 
-// Vertex Shader as a string
+// Vertex Shader (GLSL)
 let vertShader = `
-attribute vec4 a_position;
-attribute vec2 a_texcoord;
+attribute vec4 aPosition;    // Usamos aPosition (p5.js usa aPosition por defecto)
+attribute vec2 aTexCoord;    // Usamos aTexCoord (p5.js usa aTexCoord por defecto)
 
-uniform mat4 u_worldView;
-uniform mat4 u_projection;
+uniform mat4 uModelViewMatrix;  // Matriz del modelo vista (p5.js usa este nombre)
+uniform mat4 uProjectionMatrix; // Matriz de proyección (p5.js usa este nombre)
 
-varying vec2 v_texcoord;
-varying float v_fogDepth;
+varying vec2 vTexCoord;
+varying float vFogDepth; // La distancia para el cálculo de la niebla
 
 void main() {
-  // Multiply the position by the matrix.
-  gl_Position = u_projection * u_worldView * a_position;
+  // Aplicamos la transformación por las matrices de vista y proyección
+  gl_Position = uProjectionMatrix * uModelViewMatrix * aPosition;
 
-  // Pass the texcoord to the fragment shader.
-  v_texcoord = a_texcoord;
+  // Pasamos las coordenadas de textura
+  vTexCoord = aTexCoord;
 
-  // Pass just the negated z position relative to the camera.
-  // the camera is looking in the -z direction so normally stuff
-  // in front of the camera has a negative Z position
-  // but by negating he we get a positive depth.
-  v_fogDepth = -(u_worldView * a_position).z;
+  // Calculamos la distancia del vértice a la cámara (longitud de la posición)
+  vFogDepth = length((uModelViewMatrix * aPosition).xyz);
 }
 `;
 
+// Fragment Shader (GLSL)
 let fragShader = `
-  // Fragment Shader
-  precision mediump float;
+precision mediump float;
 
-  varying float vDistance; // Distance passed from the vertex shader
+varying float vFogDepth;   // La distancia calculada en el vertex shader
 
-  uniform float near;  // Near value
-  uniform float far;   // Far value
+uniform vec4 uFogColor;     // Color de la niebla
+uniform float uFogNear;     // Distancia cercana de la niebla
+uniform float uFogFar;      // Distancia lejana de la niebla
 
-  void main() {
-    vec3 fogColor = vec3(0.8, 0.9, 1.0); // Light blue fog color
+void main() {
+  // Calculamos el factor de niebla basado en la distancia
+  float fogFactor = (vFogDepth - uFogNear) / (uFogFar - uFogNear);
 
-    // Calculate fog factor based on the distance to the camera and the near/far values
-    float fogFactor = (vDistance - near) / (far - near);
+  // Limitamos el factor de niebla entre 0.0 y 1.0
+  fogFactor = clamp(fogFactor, 0.0, 1.0);
 
-    // Limit the fog factor between 0 and 1
-    fogFactor = clamp(fogFactor, 0.0, 1.0);
+  // Color del objeto (puedes aplicar la textura aquí si lo deseas)
+  vec3 objectColor = vec3(1.0);
 
-    // Object color (white in this case)
-    vec3 objectColor = vec3(1.0); 
+  // Mezclamos el color del objeto con el color de la niebla según la distancia
+  vec3 finalColor = mix(uFogColor.rgb, objectColor, fogFactor);
 
-    // Mix the fog color with the object's color based on the fog factor
-    vec3 finalColor = mix(fogColor, objectColor, fogFactor);
+  // El alfa se ajusta según la niebla para que los objetos se desvanezcan
+  float alpha = 1.0 - fogFactor;
 
-    // Apply the fog effect smoothly
-    float alpha = 1.0 - fogFactor; // The object fades as the fog factor increases
-
-    gl_FragColor = vec4(finalColor, alpha); // Set the final color with alpha for transparency
-  }
+  // Establecemos el color final con el alpha para el efecto de transparencia
+  gl_FragColor = vec4(finalColor, alpha);
+}
 `;
+
 function preload() {
-  // Load the texture image
+  // Cargar la textura
   img = loadImage('https://webglfundamentals.org/webgl/resources/f-texture.png');
 }
 
 function setup() {
-  createCanvas(800, 600, WEBGL); // Create a canvas with WebGL context
-  
-  // Load and apply the shaders
+  createCanvas(800, 600, WEBGL);
+
+  // Crear y aplicar el shader
   let customShader = createShader(vertShader, fragShader);
-  shader(customShader);  // Apply the shaders to the canvas
-  
-  // Initialize cubes with random positions
+  shader(customShader);
+
+  // Establecer valores iniciales de los uniformes
+  customShader.setUniform('uFogColor', [0.5, 0.5, 0.7, 1.0]);  // Azul claro para la niebla
+  customShader.setUniform('uFogNear', near);
+  customShader.setUniform('uFogFar', far);
+
+  // Inicializar las posiciones de los cubos
   for (let i = 0; i < 40; i++) {
     cubes.push({
       x: -2 + i * 1.1,
@@ -82,46 +85,49 @@ function setup() {
     });
   }
 
-  // Add event listeners for the sliders to update the near and far values
+  // Controladores para actualizar near y far
   document.getElementById("near").addEventListener("input", function() {
     near = parseFloat(this.value);
     document.getElementById("nearValue").innerText = near;
+    customShader.setUniform('uFogNear', near); // Actualizar el valor de uFogNear
   });
+
   document.getElementById("far").addEventListener("input", function() {
     far = parseFloat(this.value);
     document.getElementById("farValue").innerText = far;
+    customShader.setUniform('uFogFar', far); // Actualizar el valor de uFogFar
   });
 }
 
 function draw() {
-  background(204, 230, 255); // Fog color (light blue)
+  background(204, 230, 255); // Color de fondo para la niebla (azul claro)
 
-  // Set perspective
-  let fov = PI / 3; // 60 degrees field of view
+  // Establecer la perspectiva
+  let fov = PI / 3; // Ángulo de visión de 60 grados
   let aspect = width / height;
   perspective(fov, aspect, near, far);
 
-  // Set the camera
+  // Establecer la cámara
   camera(0, 0, 2, 0, 0, 0, 0, 1, 0);
 
-  // Rotate the model
+  // Rotación de los modelos
   let modelXRotation = frameCount * -0.004;
   let modelYRotation = frameCount * -0.007;
 
-  // Apply the texture
+  // Aplicar la textura
   texture(img);
 
-  // Draw each cube with transformations and fog effect
+  // Dibujar cada cubo con las transformaciones y el efecto de niebla
   for (let i = 0; i < cubes.length; i++) {
     push();
 
-    // Calculate world position and rotation for each cube
+    // Calcular la posición y rotación de cada cubo
     let cube = cubes[i];
     translate(cube.x, cube.y, cube.z);
     rotateX(modelXRotation + cube.rotationX);
     rotateY(modelYRotation + cube.rotationY);
 
-    // Draw the cube
+    // Dibujar el cubo
     box(1);
 
     pop();
